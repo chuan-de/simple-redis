@@ -1,21 +1,38 @@
 mod decode;
 mod encode;
 
-use std::collections::{HashMap, HashSet};
-use std::ops::{Deref, DerefMut};
+use bytes::BytesMut;
 use enum_dispatch::enum_dispatch;
+use std::collections::BTreeMap;
+use std::ops::{Deref, DerefMut};
+use thiserror::Error;
 
 #[enum_dispatch]
 pub trait RespEncode {
     fn encode(self) -> Vec<u8>;
 }
 
-pub trait RespDecode {
-    fn decode(buf: Self) -> Result<RespFrame, anyhow::Error>;
+pub trait RespDecode:Sized {
+    fn decode(buf: &mut BytesMut) -> Result<Self,RespError>;
+}
+
+#[derive(Error, Debug,PartialEq, Eq)]
+pub enum RespError {
+    #[error("Invalid frame: {0}")]
+    InvalidFrame(String),
+    #[error("Invalid frame type: {0}")]
+    InvalidFrameType(String),
+    #[error("Invalid frame length: {0}")]
+    InvalidFrameLength(isize),
+    #[error("Frame is not complete")]
+    NotComplete,
+
+    #[error("Parse error: {0}")]
+    ParseIntError(#[from] std::num::ParseIntError),
 }
 
 #[enum_dispatch(RespEncode)]
-#[derive(Debug,PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum RespFrame {
     SimpleString(SimpleString),
     Error(SimpleError),
@@ -31,23 +48,23 @@ pub enum RespFrame {
     Set(RespSet),
 }
 
-#[derive(Debug,PartialEq,Eq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct SimpleString(String);
-#[derive(Debug,PartialEq,Eq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct SimpleError(String);
-#[derive(Debug,PartialEq,Eq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct BulkString(Vec<u8>);
-#[derive(Debug,PartialEq,Eq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct RespNull;
-#[derive(Debug,PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct RespArray(Vec<RespFrame>);
-#[derive(Debug,PartialEq,Eq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct RespNullArray;
-#[derive(Debug,PartialEq,Eq)]
+#[derive(Debug, PartialEq, Eq, PartialOrd)]
 pub struct RespNullBulkString;
-#[derive(Debug,PartialEq)]
-pub struct RespMap(HashMap<String, RespFrame>);
-#[derive(Debug,PartialEq)]
+#[derive(Debug, PartialEq)]
+pub struct RespMap(BTreeMap<String, RespFrame>);
+#[derive(Debug, PartialEq)]
 pub struct RespSet(Vec<RespFrame>);
 
 impl Deref for SimpleString {
@@ -79,7 +96,7 @@ impl Deref for RespArray {
 }
 
 impl Deref for RespMap {
-    type Target = HashMap<String, RespFrame>;
+    type Target = BTreeMap<String, RespFrame>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -124,12 +141,12 @@ impl RespArray {
 
 impl RespMap {
     pub fn new() -> Self {
-        RespMap(HashMap::new())
+        RespMap(BTreeMap::new())
     }
 }
 
 impl RespSet {
-    pub fn new(v:impl Into<Vec<RespFrame>>) -> Self {
+    pub fn new(v: impl Into<Vec<RespFrame>>) -> Self {
         RespSet(v.into().into_iter().collect())
     }
 }
