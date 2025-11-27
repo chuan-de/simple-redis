@@ -6,3 +6,5 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.100"
 bytes = "1.11.0"
+enum_derive = "0.1.7"
+enum_dispatch = "0.3.13"
