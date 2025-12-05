@@ -1,7 +1,7 @@
 use anyhow::Result;
 use tokio::net::TcpStream;
 use tokio_util::codec::{Framed,Encoder,Decoder};
-use crate::{Backend, RespFrame};
+use crate::{Backend, RespEncode, RespFrame};
 
 #[derive(Debug)]
 struct RespFrameCodec {
@@ -31,9 +31,19 @@ async fn request_handler(_request:RedisRequest) -> Result<RedisResponse> {
 }
 
 impl Encoder <RespFrame> for RespFrameCodec {
-    type Error = std::io::Error;
+    type Error = anyhow::Error;
     fn encode(&mut self, item: RespFrame, dst: &mut bytes::BytesMut) -> std::result::Result<(), Self::Error> {
-        item.encode(dst);
-        Ok(())
+       let encoded = item.encode();
+       dst.extend_from_slice(&encoded);
+       Ok(())
+    }
+}
+
+impl Decoder for RespFrameCodec{
+    type Error = anyhow::Error;
+    type Item = RespFrame;
+    fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<RespFrame>,Self::Error> {
+        let frame = RespFrame::decode(src)?;
+        Ok(Some(frame))
     }
 }
