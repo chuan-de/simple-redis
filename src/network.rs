@@ -1,49 +1,77 @@
+use crate::{
+    Backend, RespDecode, RespEncode, RespError, RespFrame, cmd::{Command, CommandExecutor}
+};
 use anyhow::Result;
+use futures::SinkExt;
 use tokio::net::TcpStream;
-use tokio_util::codec::{Framed,Encoder,Decoder};
-use crate::{Backend, RespEncode, RespFrame};
+use tokio_stream::StreamExt;
+use tokio_util::codec::{Decoder, Encoder, Framed};
+use tracing::info;
 
 #[derive(Debug)]
-struct RespFrameCodec {
-
-}
+struct RespFrameCodec;
 
 #[derive(Debug)]
-struct RedisRequest{
-    frame:RespFrame,
-    backend:Backend,
+struct RedisRequest {
+    frame: RespFrame,
+    backend: Backend,
 }
 
 #[derive(Debug)]
 struct RedisResponse {
-    frame:RespFrame,
+    frame: RespFrame,
 }
 
-pub async fn stream_handler(_stream:TcpStream) -> Result<()> {
+pub async fn stream_handler(stream: TcpStream, backend: Backend) -> Result<()> {
+    let mut framed = Framed::new(stream, RespFrameCodec);
     loop {
-        todo!()
+        match framed.next().await {
+            Some(Ok(frame)) => {
+                info!("received frame: {:?}", frame);
+                let request = RedisRequest { frame, backend: backend.clone() };
+                let response = request_handler(request).await?;
+                framed.send(response.frame).await?;
+            }
+            Some(Err(e)) => {
+                return Err(e.into());
+            }
+            None => {
+                return Err(anyhow::anyhow!("Connection closed"));
+            }
+        }
     }
     Ok(())
 }
 
-async fn request_handler(_request:RedisRequest) -> Result<RedisResponse> {
-    todo!()
+async fn request_handler(request: RedisRequest) -> Result<RedisResponse> {
+    let (frame, backend) = (request.frame, request.backend);
+    let cmd = Command::try_from(frame)?;
+    info!("Executing command: {:?}", cmd);
+    let response = cmd.execute(&backend);
+    Ok(RedisResponse { frame: response })
 }
 
-impl Encoder <RespFrame> for RespFrameCodec {
+impl Encoder<RespFrame> for RespFrameCodec {
     type Error = anyhow::Error;
-    fn encode(&mut self, item: RespFrame, dst: &mut bytes::BytesMut) -> std::result::Result<(), Self::Error> {
-       let encoded = item.encode();
-       dst.extend_from_slice(&encoded);
-       Ok(())
+    fn encode(
+        &mut self,
+        item: RespFrame,
+        dst: &mut bytes::BytesMut,
+    ) -> std::result::Result<(), Self::Error> {
+        let encoded = item.encode();
+        dst.extend_from_slice(&encoded);
+        Ok(())
     }
 }
 
-impl Decoder for RespFrameCodec{
+impl Decoder for RespFrameCodec {
     type Error = anyhow::Error;
     type Item = RespFrame;
-    fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<RespFrame>,Self::Error> {
-        let frame = RespFrame::decode(src)?;
-        Ok(Some(frame))
+    fn decode(&mut self, src: &mut bytes::BytesMut) -> Result<Option<RespFrame>, Self::Error> {
+        match RespFrame::decode(src) {
+            Ok(frame) => Ok(Some(frame)),
+            Err(RespError::NotComplete)=>Ok(None),
+            Err(e)=>Err(e.into()),
+        }
     }
 }
